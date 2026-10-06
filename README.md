@@ -97,3 +97,7 @@ Resource names: if the release name already contains `django-app`, the full name
 ## Limitations
 
 No database backups, no NetworkPolicy. Tested on kind (Kubernetes 1.34).
+
+## How this was built
+
+Written with the help of an AI coding assistant (Claude Code) and reviewed and tested by hand. [`AGENTS.md`](AGENTS.md) records the conventions and commands an agent must follow when changing this repository.
