@@ -68,8 +68,8 @@ Non-secret settings (ports, versions, DB name) are in `group_vars/all/main.yml`.
 ```bash
 helm upgrade --install django-app ./helm/django-app \
   --namespace django --create-namespace \
-  --set image.repository=registry.example.com/team/django-app \
-  --set image.tag=1.0.0 \
+  --set image.repository=docker.io/vaymen/django-app \
+  --set image.tag=491db03 \
   --set django.allowedHosts=django.example.com   # required; "*" is rejected
 ```
 
