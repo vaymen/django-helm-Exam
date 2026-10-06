@@ -1,0 +1,6 @@
+apiVersion: v2
+name: django-app
+description: Django application with PostgreSQL (CloudNativePG operator or external)
+type: application
+version: 0.1.0
+appVersion: "491db03"

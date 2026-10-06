@@ -1,0 +1,6 @@
+{{ include "django-app.fullname" . }} deployed (image {{ include "django-app.image" . }}).
+
+Port-forward and test:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "django-app.fullname" . }} 8080:{{ .Values.service.port }}
+  curl -i http://localhost:8080/        # Django welcome page
+  curl -i http://localhost:8080/readyz  # 200 only if PostgreSQL is reachable

@@ -1,0 +1,26 @@
+# Example overrides:
+#   helm upgrade --install django-app ./helm/django-app -f helm/django-app/values-example.yaml
+image:
+  repository: docker.io/vaymen/django-app
+  tag: "491db03"
+replicaCount: 3
+django:
+  allowedHosts: django.example.com
+  csrfTrustedOrigins: https://django.example.com
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - {host: django.example.com, path: /, pathType: Prefix}
+database:
+  mode: cnpg
+  cnpg:
+    instances: 3
+    storage: {size: 10Gi}
+
+# To use an existing external database / your own Django secret instead:
+# database:
+#   mode: external
+#   credentialsSecret: {name: my-db-credentials}   # keys: host, port, dbname, username, password
+# secret:
+#   existingSecret: my-django-secret               # key: DJANGO_SECRET_KEY

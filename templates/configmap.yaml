@@ -1,0 +1,18 @@
+{{- if eq (toString .Values.django.allowedHosts) "*" }}{{ fail "django.allowedHosts must not be \"*\"; set your hostname(s)" }}{{ end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "django-app.fullname" . }}-config
+  labels:
+    {{- include "django-app.labels" . | nindent 4 }}
+data:
+  APP_VERSION: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+  DJANGO_DEBUG: {{ .Values.django.debug | quote }}
+  DJANGO_ALLOWED_HOSTS: {{ required "django.allowedHosts must be set to your hostname(s), not \"*\"" .Values.django.allowedHosts | quote }}
+  DJANGO_LOG_LEVEL: {{ .Values.django.logLevel | quote }}
+  DJANGO_BEHIND_PROXY: {{ .Values.django.behindProxy | quote }}
+  DJANGO_CSRF_TRUSTED_ORIGINS: {{ .Values.django.csrfTrustedOrigins | quote }}
+  WEB_CONCURRENCY: {{ .Values.django.workers | quote }}
+  {{- range $k, $v := .Values.django.extraEnv }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

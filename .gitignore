@@ -1,0 +1,3 @@
+secrets.yaml
+*-secrets.yaml
+charts/*.tgz
