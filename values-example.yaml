@@ -2,7 +2,7 @@
 #   helm upgrade --install django-app ./helm/django-app -f helm/django-app/values-example.yaml
 image:
   repository: docker.io/vaymen/django-app
-  tag: "491db03"
+  tag: "1f9d3ea"
 replicaCount: 3
 django:
   allowedHosts: django.example.com

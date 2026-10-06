@@ -1,0 +1,32 @@
+# Starting point for a real cluster (edit hostnames / ingress class):
+#   helm upgrade --install django-app . -n django --create-namespace -f values-production.yaml
+replicaCount: 3
+django:
+  allowedHosts: "django.example.com"
+  csrfTrustedOrigins: "https://django.example.com"
+  workers: 3
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt   # only if cert-manager is installed
+  hosts:
+    - {host: django.example.com, path: /, pathType: Prefix}
+  tls:
+    - secretName: django-example-tls
+      hosts: [django.example.com]
+database:
+  cnpg:
+    instances: 3            # 1 primary + 2 replicas, automatic failover
+    storage: {size: 20Gi}
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: django-app

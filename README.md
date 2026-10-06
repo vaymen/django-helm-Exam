@@ -1,121 +1,99 @@
-# Django + PostgreSQL deployment
+# django-helm
 
-Three ways to run the same app: a Docker image, an Ansible playbook (Docker Compose on a VM), and a standalone Helm chart (Kubernetes).
+Standalone Helm chart for Django + PostgreSQL. The database is either **CloudNativePG** (default) or an **external** database. Image: `docker.io/vaymen/django-app:<commit-id>` ([source](https://github.com/vaymen/django-app-Exam)).
 
-```text
-.
-├── django-app/   Minimal Django project + Dockerfile
-├── ansible/      Playbook, roles, inventory/vars examples
-├── helm/django-app/   Helm chart
-└── README.md
+```mermaid
+flowchart LR
+  U[Client] --> I[Ingress - optional] --> S[Service :80]
+  S --> P1[Django pod] & P2[Django pod]
+  P1 & P2 -->|DB_* from operator Secret| DB[(CNPG Cluster + PVC)]
+  P1 -. init: migrate .-> DB
 ```
 
-> **Status:** written without access to a running Docker daemon, Helm, or Ansible, so none of it has been executed yet.
-> Please run the verification steps below (`helm lint`, `ansible-playbook --syntax-check`, `docker build`) before relying on it.
+## What the chart creates
+
+Deployment (with a migration init container), Service, ConfigMap, Secret (auto-generated, stable `SECRET_KEY`), ServiceAccount, PodDisruptionBudget, CNPG `Cluster` (optional), Ingress and HPA (optional).
 
 ## Prerequisites
 
-| Part | Needs |
-|------|-------|
-| Docker | Docker 24+ |
-| Ansible | Controller: `ansible-core` ≥ 2.15. Target: **Ubuntu 24.04+** (needs the `docker-compose-v2` package; not in 22.04/Debian 12), SSH + sudo, internet access to apt and Docker Hub |
-| Helm | Kubernetes ≥ 1.27, Helm 3, a default StorageClass, and the [CloudNativePG](https://cloudnative-pg.io) operator installed (or an external PostgreSQL, see below) |
-
-## Docker
+Kubernetes ≥ 1.27, Helm 3, a default StorageClass, and the CloudNativePG operator (unless `database.mode=external`).
 
 ```bash
-cd django-app
-TAG=$(git rev-parse --short HEAD)          # image tag = commit id
-docker build -t docker.io/vaymen/django-app:$TAG .
-docker push docker.io/vaymen/django-app:$TAG   # after `docker login`
-
-# throw-away Postgres + app
-docker network create demo
-docker run -d --name pg --network demo -e POSTGRES_PASSWORD=demo -e POSTGRES_DB=django postgres:16-alpine
-docker run --rm --network demo -p 8000:8000 \
-  -e DJANGO_SECRET_KEY=dev-only -e DB_HOST=pg -e DB_NAME=django -e DB_USER=postgres -e DB_PASSWORD=demo \
-  docker.io/vaymen/django-app:$TAG
+helm repo add cnpg https://cloudnative-pg.github.io/charts && helm repo update
+helm upgrade --install cnpg cnpg/cloudnative-pg -n cnpg-system --create-namespace --wait
 ```
 
-Configuration is entirely environment variables: `DJANGO_SECRET_KEY` (required), `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (required), `DB_PORT`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_BEHIND_PROXY`, `APP_VERSION`, `WEB_CONCURRENCY`.
+> The latest operator chart requires Kubernetes **≥ 1.29**. On older clusters install an older chart version: `helm search repo cnpg/cloudnative-pg --versions`, pick one whose `kubeVersion` fits, and pass `--version <it>`.
 
-## Ansible
-
-Assumptions about the target host: Ubuntu 24.04+, reachable over SSH with a sudo-capable user, outbound internet. Docker (`docker.io`, `docker-compose-v2`, `python3-docker`) is installed by the playbook.
+## Quick start (local: kind, minikube, Docker Desktop)
 
 ```bash
-cd ansible
-ansible-galaxy collection install -r requirements.yml
-
-cp inventory/hosts.ini.example inventory/hosts.ini     # edit host / user
-cp group_vars/all/vault.yml.example group_vars/all/vault.yml
-$EDITOR group_vars/all/vault.yml                       # set db_password, django_secret_key
-ansible-vault encrypt group_vars/all/vault.yml
-
-ansible-playbook playbook.yml --ask-vault-pass
-# equivalent explicit form: ansible-playbook -i inventory/hosts.ini playbook.yml --ask-vault-pass
+helm upgrade --install django-app . -n django --create-namespace \
+  -f values-local.yaml --wait --timeout 10m
+kubectl -n django port-forward svc/django-app 8080:80      # http://localhost:8080
 ```
 
-Non-secret settings (ports, versions, DB name) are in `group_vars/all/main.yml`. `app_allowed_hosts` defaults to the inventory host; `"*"` is rejected. Secrets go into two separate `0600` files (`app.env`, `db.env`) so PostgreSQL never sees the Django secret; `$` is escaped for Compose. PostgreSQL reads `POSTGRES_PASSWORD` only on first volume creation, so the playbook also runs `ALTER ROLE` to apply a changed `db_password` to an existing database. `app_allowed_hosts` defaults to the inventory host (`ansible_host`); `"*"` is rejected by the playbook. Secrets are rendered into two separate `0600` files (`app.env`, `db.env`) so PostgreSQL never sees the Django secret. `$` in secrets is escaped for Compose. Because PostgreSQL only reads `POSTGRES_PASSWORD` on first volume creation, the playbook also runs `ALTER ROLE` so a changed `db_password` is applied to an existing database. The app is published on host port `8000`; PostgreSQL is not published.
+## Installing in different environments
 
-**Idempotency:** the image is pulled by an immutable tag (`app_image_tag` = git commit id of the django-app repo), so `docker_image` only reports *changed* when the tag is new; templates and `docker_compose_v2 recreate: auto` only act on real changes, so a second run reports `changed=0` and restarts nothing. The only task that always runs is the `ALTER ROLE` password sync (`changed_when: false`).
+| Environment | Command / settings |
+|---|---|
+| **kind / minikube / Docker Desktop** | `-f values-local.yaml` (one replica, no PDB). Pulls from Docker Hub; for a local image use `kind load docker-image <image> --name <cluster>` |
+| **Cloud (EKS, GKE, AKS)** | `-f values-production.yaml`: 3 replicas, Ingress with TLS, 3-instance CNPG cluster, HPA, topology spread. Adjust `ingress.className` and hostnames |
+| **External database (RDS, Cloud SQL, ...)** | `--set database.mode=external --set database.credentialsSecret.name=my-db`; the Secret needs the keys `host, port, dbname, username, password` (key names are configurable) |
+| **Private registry** | `kubectl create secret docker-registry regcred ...` then `--set 'imagePullSecrets[0].name=regcred'` |
+| **Air-gapped** | mirror the image to an internal registry and set `image.repository` |
+| **Bring your own Django secret** | `--set secret.existingSecret=my-secret` (key `DJANGO_SECRET_KEY`) |
+| **No ingress controller** | `kubectl port-forward`, or `service.type=LoadBalancer` / `NodePort` |
 
-## Kubernetes / Helm
+### Key values
 
-1. Build and push the image to a registry the cluster can pull from.
-2. Install (CloudNativePG operator must exist; the chart creates a `Cluster` resource):
+| Value | Default | Notes |
+|---|---|---|
+| `image.repository` / `image.tag` | `docker.io/vaymen/django-app` / commit id | tag = commit id |
+| `replicaCount` | `2` | ignored when `autoscaling.enabled` |
+| `django.allowedHosts` | **required** | `"*"` is rejected on purpose |
+| `django.csrfTrustedOrigins` | `""` | e.g. `https://app.example.com` |
+| `resources` | req 100m / 128Mi, limit 256Mi | |
+| `database.mode` | `cnpg` | or `external` |
+| `database.cnpg.instances` / `.storage.size` | `1` / `5Gi` | use `3` for HA |
+| `migrate.enabled` | `true` | run `migrate` in an init container |
 
-```bash
-helm upgrade --install django-app ./helm/django-app \
-  --namespace django --create-namespace \
-  --set image.repository=docker.io/vaymen/django-app \
-  --set image.tag=491db03 \
-  --set django.allowedHosts=django.example.com   # required; "*" is rejected
-```
-
-Or use a values file; see `helm/django-app/values-example.yaml`.
-
-Resource names below assume release name `django-app` (the chart fullname is the release name when it already contains "django-app", otherwise `<release>-django-app`). Key values: `image.*`, `replicaCount`, `resources`, `django.*` (ConfigMap), `secret.existingSecret`, `database.mode` (`cnpg` | `external`), `database.cnpg.{instances,storage}`, `ingress.*`, `autoscaling.*`.
-
-**Secrets:** nothing sensitive is in the repo. The DB password is generated by the operator into `<fullname>-db-app`. The Django `SECRET_KEY` is generated by the chart on first install and reused on upgrades (via `lookup`), or supply your own with `secret.existingSecret`.
-
-**External database:** `--set database.mode=external --set database.credentialsSecret.name=my-db` where the Secret has keys `host, port, dbname, username, password` (key names are overridable).
+> `--set` treats a comma as a separator. For several hosts use a values file, or `--set-string 'django.allowedHosts=a\,b'`.
 
 ## Verification
 
-Docker / Ansible host:
 ```bash
-curl -i http://<host>:8000/          # Django welcome page (200)
-curl -i http://<host>:8000/readyz    # {"status":"ok","database":"ok"} only if Postgres is reachable
-docker compose -f /opt/django-app/docker-compose.yml ps
-```
-
-Kubernetes:
-```bash
-kubectl -n django get cluster,pods                      # CNPG cluster "Cluster in healthy state", pods Ready
+kubectl -n django get cluster,pods,svc,pvc          # Cluster healthy, pod 1/1 Running, PVC Bound
 kubectl -n django rollout status deploy/django-app
-kubectl -n django port-forward svc/django-app 8080:80
-curl -i localhost:8080/            # welcome page
-curl -i localhost:8080/readyz      # 200 => Django -> PostgreSQL works
-kubectl -n django logs deploy/django-app -c migrate   # migrations applied
-kubectl -n django delete pod -l app.kubernetes.io/name=django-app   # pods come back; service stays available (2 replicas + PDB)
+curl -i localhost:8080/                              # welcome page
+curl -i localhost:8080/readyz                        # 200 and "database":"ok"
+kubectl -n django logs deploy/django-app -c migrate  # applied migrations
+kubectl -n django delete pod -l app.kubernetes.io/name=django-app   # comes back Ready
 ```
 
-Static checks (no cluster needed): `helm lint helm/django-app`, `helm template t helm/django-app`, `ansible-playbook playbook.yml --syntax-check`.
+Resource names: if the release name already contains `django-app`, the full name equals the release name (`django-app`); otherwise it is `<release>-django-app`.
+
+## Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `ImagePullBackOff` | image not on the registry, or it is private |
+| `no matches for kind "Cluster"` | CloudNativePG operator is not installed |
+| `chart requires kubeVersion` | operator chart is too new for your Kubernetes (see above) |
+| `Missing required value: django.allowedHosts` | set `django.allowedHosts` |
+| PVC stuck in `Pending` | no default StorageClass; set `database.cnpg.storage.storageClass` |
+| `failed parsing --set data` | comma inside `--set`; use a values file |
+| `\` line continuation fails in PowerShell | `\` is bash-only; use a backtick or a single line |
 
 ## Design decisions
 
-- **Image:** multi-stage build into a virtualenv, `python:3.12-slim`, `psycopg[binary]` so no compiler or libpq-dev is needed at runtime, non-root UID 10001, gunicorn (not `runserver`), worker tmp in `/dev/shm` so the root filesystem can be read-only.
-- **Welcome page in production:** `DEBUG=False` normally 404s the root; the project routes `/` to Django's stock `default_urlconf` view so the page is served with debug off.
-- **Health endpoints via middleware:** `/healthz` (liveness, no dependencies, so a DB outage doesn't restart-loop the app) and `/readyz` (readiness, runs `SELECT 1`, so pods without DB are removed from the Service). Placed first in the middleware stack so probes work with the pod IP as `Host` regardless of `ALLOWED_HOSTS`. A startup probe gives slow starts room without loosening liveness.
-- **Ansible with Compose:** a single-host stack maps naturally to Compose; Ansible handles OS prep, secrets (Vault → `0600` env file), templating and convergence. The image is built and pushed by CI/you from the `django-app` repo, tagged with the commit id, and pulled by both Ansible and Helm (public Docker Hub image; for a private one add `docker login` on the host / `imagePullSecrets`).
-- **CloudNativePG:** gives persistent storage, generated credentials, and HA (`instances: 3`) without writing a StatefulSet by hand. An `external` mode keeps the chart usable where the DB is managed elsewhere.
-- **Migrations in an init container**, toggleable. Simple and runs before the app serves traffic. Trade-off: with many replicas starting simultaneously, each runs `migrate`; Django migrations are transactional on Postgres so this is safe for this app, but a Helm hook Job (or leader-only job) is preferable for large/long migrations.
-- **Hardening:** `runAsNonRoot`, read-only root FS, all capabilities dropped, seccomp `RuntimeDefault`, no service-account token mounted, `maxUnavailable: 0` rolling updates.
-- **Extras added deliberately:** PodDisruptionBudget (safe node drains), optional Ingress and HPA (off by default). **Not added:** NetworkPolicy and RBAC. The app needs no Kubernetes API access, and NetworkPolicy rules depend on the cluster's CNI and ingress controller; this is the first thing I'd add for production.
+- **CloudNativePG.** Persistent storage, generated credentials and failover without a hand-written StatefulSet. The `external` mode covers databases that live elsewhere.
+- **Probes.** A startup probe handles slow starts; liveness uses `/healthz` (no database dependency, so an outage cannot cause a restart loop); readiness uses `/readyz` (database required).
+- **Migrations in an init container.** Simple. With several replicas each runs `migrate` concurrently, which is safe on PostgreSQL (transactional); for long migrations use a Helm hook Job.
+- **Security.** `runAsNonRoot`, read-only root filesystem, all capabilities dropped, seccomp `RuntimeDefault`, no ServiceAccount token, `maxUnavailable: 0`.
+- **Extras.** PodDisruptionBudget (safe node drains); Ingress and HPA (off by default). **Deliberately not added:** NetworkPolicy and RBAC. Policies depend on the CNI; they are the first thing to add for production.
+- **Possible, but not a fit here:** GitOps with Argo CD, External Secrets, database backups via `barmanObjectStore`, cert-manager, a Helm hook Job for migrations.
 
-## Not done / known limitations
+## Limitations
 
-- Nothing executed or tested (see status above).
-- No CI, no image scanning/signing, no TLS automation (cert-manager) and no static-file serving (the app has no static assets).
-- Compose deployment is single-host with no database backups; CNPG backups (`barmanObjectStore`) aren't configured.
+No database backups, no NetworkPolicy. Tested on kind (Kubernetes 1.34).

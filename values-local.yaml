@@ -1,0 +1,10 @@
+# Small footprint for kind / minikube / Docker Desktop:
+#   helm upgrade --install django-app . -n django --create-namespace -f values-local.yaml
+replicaCount: 1
+django:
+  allowedHosts: "localhost,127.0.0.1"
+database:
+  cnpg:
+    instances: 1
+podDisruptionBudget:
+  enabled: false   # with a single replica a PDB would block node drains

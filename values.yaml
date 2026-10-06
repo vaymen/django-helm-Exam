@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: docker.io/vaymen/django-app
-  tag: "491db03"                    # git commit id of the django-app repo
+  tag: "1f9d3ea"                    # git commit id of the django-app repo
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
