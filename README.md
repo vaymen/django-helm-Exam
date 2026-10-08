@@ -100,4 +100,4 @@ No database backups, no NetworkPolicy. Tested on kind (Kubernetes 1.34).
 
 ## How this was built
 
-Written with the help of an AI coding assistant (Claude Code) and reviewed and tested by hand. [`AGENTS.md`](AGENTS.md) records the conventions and commands an agent must follow when changing this repository.
+Written with the help of an AI coding assistant (Claude Code) and reviewed by hand. The chart was rendered with `helm template` and installed on kind (Kubernetes 1.34) with CloudNativePG. [`AGENTS.md`](AGENTS.md) records the conventions and commands an agent must follow when changing this repository.
